@@ -1,4 +1,4 @@
-module goworkerpool
+module github.com/severuykhin/goworkerpool
 
 go 1.22.4
 
