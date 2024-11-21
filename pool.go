@@ -1,37 +1,63 @@
-package goworkerpool
+package goconcurrentpool
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 type job func()
 
-type workerPool struct {
-	pool chan job
-	wg   sync.WaitGroup
+type concurrentPool struct {
+	size      int
+	jobChan   chan job
+	closeChan chan struct{} // Канал для отслеживания состояния заверешния работы
+	wg        sync.WaitGroup
 }
 
-func NewWorkerPool(size int) *workerPool {
-	p := workerPool{
-		pool: make(chan job),
+func New(size int) *concurrentPool {
+	if size <= 0 {
+		size = 1
 	}
+	return &concurrentPool{
+		size:      size,
+		jobChan:   make(chan job),
+		closeChan: make(chan struct{}),
+	}
+}
 
-	for i := 0; i < size; i++ {
+func (p *concurrentPool) Run() {
+	for i := 0; i < p.size; i++ {
 		go func() {
-			for wf := range p.pool {
-				wf()
+			for jobFunc := range p.jobChan {
+				func() { // локализация обработки паники при выполнении jobFunc
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Printf("concurent pool: jobFunc recovered from panic: %+v", r)
+						}
+					}()
+					jobFunc()
+				}()
 				p.wg.Done()
 			}
 		}()
 	}
-
-	return &p
 }
 
-func (p *workerPool) RunJob(jobFunc job) {
-	p.wg.Add(1)
-	p.pool <- jobFunc
+func (p *concurrentPool) RunJob(jobFunc job) error {
+	select {
+	case <-p.closeChan:
+		// Канал закрыт, не добавляем новые задания
+		return fmt.Errorf("concurrent pool is stopped")
+	default:
+		// Канал открыт, добавляем задание
+		p.wg.Add(1)
+		p.jobChan <- jobFunc
+	}
+	return nil
 }
 
-func (p *workerPool) StopAndWait() {
+func (p *concurrentPool) WaitAndClose() {
+	close(p.closeChan) // Закрываем канал состояния
 	p.wg.Wait()
-	close(p.pool)
+	close(p.jobChan)
 }
