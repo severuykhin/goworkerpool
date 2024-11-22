@@ -18,6 +18,10 @@ func (j *testJob) Run() int {
 	return j.Result
 }
 
+func emptyJob() (any, error) {
+	return nil, nil
+}
+
 func TestPool(t *testing.T) {
 
 	testJobs := []testJob{
@@ -39,14 +43,20 @@ func TestPool(t *testing.T) {
 	}
 
 	cp := New(3)
+
+	err := cp.RunJob(emptyJob)
+	assert.Error(t, err)
+	assert.ErrorIs(t, ErrPoolNotActive, err)
+
 	cp.Run()
 
 	total := 0
 
 	for _, job := range testJobs {
-		err := cp.RunJob(func() {
+		err := cp.RunJob(func() (any, error) {
 			r := job.Run()
 			total = total + r
+			return r, nil
 		})
 
 		assert.NoError(t, err)
@@ -56,7 +66,9 @@ func TestPool(t *testing.T) {
 
 	assert.Equal(t, 410, total)
 
-	err := cp.RunJob(func() {})
+	err = cp.RunJob(emptyJob)
 
 	assert.Error(t, err)
+	assert.ErrorIs(t, ErrPoolNotActive, err)
+
 }

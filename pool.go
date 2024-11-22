@@ -5,13 +5,15 @@ import (
 	"sync"
 )
 
-type job func()
+type job func() (any, error)
 
 type concurrentPool struct {
 	size      int
 	jobChan   chan job
 	closeChan chan struct{} // Канал для отслеживания состояния заверешния работы
+	active    bool
 	wg        sync.WaitGroup
+	mu        sync.Mutex
 }
 
 func New(size int) *concurrentPool {
@@ -26,13 +28,18 @@ func New(size int) *concurrentPool {
 }
 
 func (p *concurrentPool) Run() {
+
+	p.mu.Lock()
+	p.active = true
+	p.mu.Unlock()
+
 	for i := 0; i < p.size; i++ {
 		go func() {
 			for jobFunc := range p.jobChan {
 				func() { // локализация обработки паники при выполнении jobFunc
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Printf("concurent pool: jobFunc recovered from panic: %+v", r)
+							fmt.Printf("concurrent pool: jobFunc recovered from panic: %+v", r)
 						}
 					}()
 					jobFunc()
@@ -44,20 +51,26 @@ func (p *concurrentPool) Run() {
 }
 
 func (p *concurrentPool) RunJob(jobFunc job) error {
-	select {
-	case <-p.closeChan:
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.active {
 		// Канал закрыт, не добавляем новые задания
-		return fmt.Errorf("concurrent pool is stopped")
-	default:
-		// Канал открыт, добавляем задание
-		p.wg.Add(1)
-		p.jobChan <- jobFunc
+		return ErrPoolNotActive
 	}
+
+	// Канал открыт, добавляем задание
+	p.wg.Add(1)
+	p.jobChan <- jobFunc
+
 	return nil
 }
 
 func (p *concurrentPool) WaitAndClose() {
-	close(p.closeChan) // Закрываем канал состояния
+	p.mu.Lock()
+	p.active = false
+	p.mu.Unlock()
+
 	p.wg.Wait()
 	close(p.jobChan)
 }
